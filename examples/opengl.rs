@@ -20,6 +20,7 @@ use glium::{
         dpi::LogicalSize,
         event::{Event, WindowEvent},
         event_loop::{ControlFlow, EventLoop},
+        platform::{unix::WindowExtUnix, ContextTraitExt},
         window::WindowBuilder,
         ContextBuilder,
     },
@@ -29,13 +30,29 @@ use libmpv::{
     render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType},
     FileState, Mpv,
 };
-use std::{env, ffi::c_void};
+use std::{
+    env,
+    ffi::{c_char, c_void, CStr},
+    mem::transmute,
+};
 
-fn get_proc_address(display: &Display, name: &str) -> *mut c_void {
-    display.gl_window().context().get_proc_address(name) as *mut c_void
+// fn get_proc_address(display: &Display, name: &str) -> *mut c_void {
+//     println!("!");
+//     display.gl_window().get_proc_address(name) as *mut c_void
+// }
+
+unsafe extern "C" fn get_proc_addr(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
+    let rust_name = CStr::from_ptr(name).to_str().unwrap();
+    // use a rwlock for real
+    println!("begin get_proc_addr {:?}", CStr::from_ptr(name));
+    let window: &&Display = transmute(ctx);
+    let addr = window.gl_window().context().get_proc_address(rust_name) as *mut _;
+    println!("end get_proc_addr {:?}", addr);
+    addr
 }
 
-const VIDEO_URL: &str = "https://www.youtube.com/watch?v=DLzxrzFCyOs";
+const VIDEO_URL: &str =
+    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4";
 
 #[derive(Debug)]
 enum UserEvent {
@@ -56,17 +73,13 @@ fn main() {
     let display = Display::new(wb, cb, &events_loop).unwrap();
 
     let mut mpv = Mpv::new().expect("Error while creating MPV");
-    let mut render_context = RenderContext::new(
-        unsafe { mpv.ctx.as_mut() },
-        vec![
-            RenderParam::ApiType(RenderParamApiType::OpenGl),
-            RenderParam::InitParams(OpenGLInitParams {
-                get_proc_address,
-                ctx: display.clone(),
-            }),
-        ],
-    )
-    .expect("Failed creating render context");
+
+    println!("Starting with {:?}", display.gl_window().get_api());
+
+    let mut render_context =
+        RenderContext::new(unsafe { mpv.ctx.as_mut() }, &display, get_proc_addr)
+            .expect("Failed creating render context");
+
     mpv.event_context_mut().disable_deprecated_events().unwrap();
     let event_proxy = events_loop.create_proxy();
     render_context.set_update_callback(move || {
@@ -81,6 +94,7 @@ fn main() {
     let mut render_context = Some(render_context);
     mpv.playlist_load_files(&[(&path, FileState::AppendPlay, None)])
         .unwrap();
+
     events_loop.run(move |event, _target, control_flow| {
         match event {
             Event::WindowEvent {
@@ -99,7 +113,7 @@ fn main() {
                         break;
                     }
                     Some(Ok(mpv_event)) => {
-                        eprintln!("MPV event: {:?}", mpv_event);
+                        eprintln!("MPV event: {:?   }", mpv_event);
                     }
                     Some(Err(err)) => {
                         eprintln!("MPV Error: {}", err);

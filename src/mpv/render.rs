@@ -20,13 +20,16 @@ use crate::{mpv::mpv_err, Error, Result};
 use libmpv_sys::{
     self, mpv_handle, mpv_opengl_init_params, mpv_render_context, mpv_render_context_free,
     mpv_render_context_render, mpv_render_context_set_update_callback, mpv_render_frame_info,
-    mpv_render_param,
+    mpv_render_param, mpv_render_param_type_MPV_RENDER_PARAM_ADVANCED_CONTROL,
+    mpv_render_param_type_MPV_RENDER_PARAM_API_TYPE,
+    mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, MPV_RENDER_API_TYPE_OPENGL,
 };
 use std::collections::HashMap;
 use std::convert::From;
-use std::ffi::{c_void, CStr};
+use std::ffi::{c_char, c_void, CStr};
+use std::mem::transmute;
 use std::os::raw::c_int;
-use std::ptr;
+use std::ptr::{self, null_mut};
 
 type DeleterFn = unsafe fn(*mut c_void);
 
@@ -145,12 +148,13 @@ unsafe extern "C" fn gpa_wrapper<GLContext>(ctx: *mut c_void, name: *const i8) -
 
     let params: *mut OpenGLInitParams<GLContext> = ctx as _;
     let params = &*params;
-    (params.get_proc_address)(
-        &params.ctx,
-        CStr::from_ptr(name)
-            .to_str()
-            .expect("Could not convert function name to str"),
-    )
+
+    let gl_fn = CStr::from_ptr(name)
+        .to_str()
+        .expect("Could not convert function name to str");
+    println!("gl: {gl_fn}");
+
+    (params.get_proc_address)(&params.ctx, gl_fn)
 }
 
 unsafe extern "C" fn ru_wrapper<F: Fn() + Send + 'static>(ctx: *mut c_void) {
@@ -221,47 +225,87 @@ unsafe fn free_init_params<C>(ptr: *mut c_void) {
 impl RenderContext {
     pub fn new<C>(
         mpv: &mut mpv_handle,
-        params: impl IntoIterator<Item = RenderParam<C>>,
+        ctx: C,
+        get_proc_fn: unsafe extern "C" fn(*mut std::ffi::c_void, *const i8) -> *mut c_void,
     ) -> Result<Self> {
-        let params: Vec<_> = params.into_iter().collect();
-        let mut raw_params: Vec<mpv_render_param> = Vec::new();
-        raw_params.reserve(params.len() + 1);
-        let mut raw_ptrs: HashMap<*const c_void, DeleterFn> = HashMap::new();
+        // let params: Vec<_> = params.into_iter().collect();
+        // let mut raw_params: Vec<mpv_render_param> = Vec::new();
+        // raw_params.reserve(params.len() + 1);
+        // let mut raw_ptrs: HashMap<*const c_void, DeleterFn> = HashMap::new();
 
-        for p in params {
-            // The render params are type-erased after they are passed to mpv. This is where we last
-            // know their real types, so we keep a deleter here.
-            let deleter: Option<DeleterFn> = match p {
-                RenderParam::InitParams(_) => Some(free_init_params::<C>),
-                RenderParam::FBO(_) => Some(free_void_data::<FBO>),
-                RenderParam::FlipY(_) => Some(free_void_data::<i32>),
-                RenderParam::Depth(_) => Some(free_void_data::<i32>),
-                RenderParam::ICCProfile(_) => Some(free_void_data::<Box<[u8]>>),
-                RenderParam::AmbientLight(_) => Some(free_void_data::<i32>),
-                RenderParam::NextFrameInfo(_) => Some(free_void_data::<RenderFrameInfo>),
-                _ => None,
-            };
-            let raw_param: mpv_render_param = p.into();
-            if let Some(deleter) = deleter {
-                raw_ptrs.insert(raw_param.data, deleter);
+        // for p in params {
+        //     // The render params are type-erased after they are passed to mpv. This is where we last
+        //     // know their real types, so we keep a deleter here.
+        //     let deleter: Option<DeleterFn> = match p {
+        //         RenderParam::InitParams(_) => Some(free_init_params::<C>),
+        //         RenderParam::FBO(_) => Some(free_void_data::<FBO>),
+        //         RenderParam::FlipY(_) => Some(free_void_data::<i32>),
+        //         RenderParam::Depth(_) => Some(free_void_data::<i32>),
+        //         RenderParam::ICCProfile(_) => Some(free_void_data::<Box<[u8]>>),
+        //         RenderParam::AmbientLight(_) => Some(free_void_data::<i32>),
+        //         RenderParam::NextFrameInfo(_) => Some(free_void_data::<RenderFrameInfo>),
+        //         _ => None,
+        //     };
+
+        //     let raw_param: mpv_render_param = p.into();
+        //     if let Some(deleter) = deleter {
+        //         raw_ptrs.insert(raw_param.data, deleter);
+        //     }
+
+        //     raw_params.push(raw_param);
+        // }
+        // // the raw array must end with type = 0
+        // raw_params.push(mpv_render_param {
+        //     type_: 0,
+        //     data: ptr::null_mut(),
+        // });
+
+        let proc_addr_addr = get_proc_fn as *const ();
+        println!("addr {:?}", proc_addr_addr);
+
+        let mpv_ogl_init_param = unsafe {
+            mpv_opengl_init_params {
+                get_proc_address: Some(get_proc_fn),
+                get_proc_address_ctx: transmute(&ctx),
             }
+        };
 
-            raw_params.push(raw_param);
-        }
-        // the raw array must end with type = 0
-        raw_params.push(mpv_render_param {
-            type_: 0,
-            data: ptr::null_mut(),
-        });
+        let mut mpv_render_params = unsafe {
+            let proc_addr_addr = Some(get_proc_fn);
+            println!("addr {:?}", &proc_addr_addr as *const _);
+            let vv = vec![
+                mpv_render_param {
+                    type_: mpv_render_param_type_MPV_RENDER_PARAM_API_TYPE,
+                    data: transmute(MPV_RENDER_API_TYPE_OPENGL),
+                },
+                mpv_render_param {
+                    type_: mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_INIT_PARAMS,
+                    data: transmute(&mpv_ogl_init_param),
+                },
+                mpv_render_param {
+                    type_: mpv_render_param_type_MPV_RENDER_PARAM_ADVANCED_CONTROL,
+                    data: transmute(&mut 1),
+                },
+                mpv_render_param {
+                    // end??
+                    type_: 0,
+                    data: null_mut(),
+                },
+            ];
+            vv
+        };
 
         unsafe {
-            let raw_array = Box::into_raw(raw_params.into_boxed_slice()) as *mut mpv_render_param;
             let ctx = Box::into_raw(Box::new(std::ptr::null_mut() as _));
-            let err = libmpv_sys::mpv_render_context_create(ctx, &mut *mpv, raw_array);
-            Box::from_raw(raw_array);
-            for (ptr, deleter) in raw_ptrs.iter() {
-                (deleter)(*ptr as _);
-            }
+            let err = libmpv_sys::mpv_render_context_create(
+                ctx,
+                &mut *mpv,
+                mpv_render_params.as_mut_ptr(),
+            );
+            // Box::from_raw(raw_array);
+            // for (ptr, deleter) in raw_ptrs.iter() {
+            //     (deleter)(*ptr as _);
+            // }
 
             mpv_err(
                 Self {
