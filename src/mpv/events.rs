@@ -24,6 +24,7 @@ use std::ffi::{c_void, CString};
 use std::os::raw as ctype;
 use std::ptr::NonNull;
 use std::slice;
+use std::sync::atomic::Ordering;
 
 /// An `Event`'s ID.
 pub use libmpv_sys::mpv_event_id as EventId;
@@ -46,6 +47,26 @@ pub mod mpv_event_id {
     pub use libmpv_sys::mpv_event_id_MPV_EVENT_START_FILE as StartFile;
     pub use libmpv_sys::mpv_event_id_MPV_EVENT_TICK as Tick;
     pub use libmpv_sys::mpv_event_id_MPV_EVENT_VIDEO_RECONFIG as VideoReconfig;
+}
+
+impl Mpv {
+    /// Create a context that can be used to wait for events and control which events are listened
+    /// for.
+    ///
+    /// # Panics
+    /// Panics if a context already exists
+    pub fn create_event_context(&self) -> EventContext {
+        match self
+            .events_guard
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => EventContext {
+                ctx: self.ctx,
+                wakeup_callback_cleanup: None,
+            },
+            Err(_) => panic!("Event context already exists"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -161,12 +182,7 @@ impl EventContext {
 
     /// Enable all, except deprecated, events.
     pub fn enable_all_events(&self) -> Result<()> {
-        for i in (2..9)
-            .chain(14..15)
-            .chain(16..19)
-            .chain(20..23)
-            .chain(23..26)
-        {
+        for i in (2..9).chain(16..19).chain(20..23).chain(24..26) {
             self.enable_event(i)?;
         }
         Ok(())
@@ -181,14 +197,7 @@ impl EventContext {
 
     /// Diable all deprecated events.
     pub fn disable_deprecated_events(&self) -> Result<()> {
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_TRACKS_CHANGED)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_TRACK_SWITCHED)?;
         self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_IDLE)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_PAUSE)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_UNPAUSE)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_SCRIPT_INPUT_DISPATCH)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_METADATA_UPDATE)?;
-        self.disable_event(libmpv_sys::mpv_event_id_MPV_EVENT_CHAPTER_CHANGE)?;
         Ok(())
     }
 
@@ -283,10 +292,8 @@ impl EventContext {
 
                 if let Err(e) = mpv_err((), end_file.error) {
                     Some(Err(e))
-                } else if end_file.reason >= 0 {
-                    Some(Ok(Event::EndFile(end_file.reason as _)))
                 } else {
-                    None
+                    Some(Ok(Event::EndFile(end_file.reason as _)))
                 }
             }
             mpv_event_id::FileLoaded => Some(Ok(Event::FileLoaded)),

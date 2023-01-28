@@ -423,6 +423,7 @@ impl MpvInitializer {
 pub struct Mpv {
     /// The handle to the mpv core
     pub ctx: NonNull<libmpv_sys::mpv_handle>,
+    events_guard: AtomicBool,
     event_context: EventContext,
     #[cfg(feature = "protocols")]
     protocols_guard: AtomicBool,
@@ -474,6 +475,7 @@ impl Mpv {
 
         Ok(Mpv {
             ctx,
+            events_guard: AtomicBool::new(false),
             event_context: EventContext::new(ctx),
             #[cfg(feature = "protocols")]
             protocols_guard: AtomicBool::new(false),
