@@ -296,20 +296,16 @@ impl RenderContext {
         };
 
         unsafe {
-            let ctx = Box::into_raw(Box::new(std::ptr::null_mut() as _));
+            let mut mpv_gl: *mut mpv_render_context = null_mut();
             let err = libmpv_sys::mpv_render_context_create(
-                ctx,
-                &mut *mpv,
+                &mut mpv_gl,
+                mpv,
                 mpv_render_params.as_mut_ptr(),
             );
-            // Box::from_raw(raw_array);
-            // for (ptr, deleter) in raw_ptrs.iter() {
-            //     (deleter)(*ptr as _);
-            // }
 
             mpv_err(
                 Self {
-                    ctx: *Box::from_raw(ctx),
+                    ctx: mpv_gl,
                     update_callback_cleanup: None,
                 },
                 err,
@@ -382,35 +378,41 @@ impl RenderContext {
     /// * `flip` - Whether to draw the image upside down. This is needed for OpenGL because
     ///            it uses a coordinate system with positive Y up, but videos use positive
     ///            Y down.
-    pub fn render<GLContext>(&self, fbo: i32, width: i32, height: i32, flip: bool) -> Result<()> {
-        let mut raw_params: Vec<mpv_render_param> = Vec::with_capacity(3);
-        let mut raw_ptrs: HashMap<*const c_void, DeleterFn> = HashMap::new();
+    pub fn render(&self, width: i32, height: i32) -> Result<()> {
+        let mut mpv_render_params = unsafe {
+            vec![
+                mpv_render_param {
+                    type_: libmpv_sys::mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_FBO,
+                    data: transmute(&mut libmpv_sys::mpv_opengl_fbo {
+                        fbo: 0,
+                        w: width,
+                        h: height,
+                        internal_format: 0,
+                    }),
+                },
+                // Why does MPV render upside down by default ):
+                mpv_render_param {
+                    type_: libmpv_sys::mpv_render_param_type_MPV_RENDER_PARAM_FLIP_Y,
+                    data: transmute(&mut 1),
+                },
+                mpv_render_param {
+                    type_: mpv_render_param_type_MPV_RENDER_PARAM_ADVANCED_CONTROL,
+                    data: transmute(&mut 1),
+                },
+                mpv_render_param {
+                    // end??
+                    type_: 0,
+                    data: null_mut(),
+                },
+            ]
+        };
 
-        let raw_param: mpv_render_param =
-            RenderParam::<GLContext>::FBO(FBO { fbo, width, height }).into();
-        raw_ptrs.insert(raw_param.data, free_void_data::<FBO>);
-        raw_params.push(raw_param);
-        let raw_param: mpv_render_param = RenderParam::<GLContext>::FlipY(flip).into();
-        raw_ptrs.insert(raw_param.data, free_void_data::<i32>);
-        raw_params.push(raw_param);
-        // the raw array must end with type = 0
-        raw_params.push(mpv_render_param {
-            type_: 0,
-            data: ptr::null_mut(),
-        });
-
-        let raw_array = Box::into_raw(raw_params.into_boxed_slice()) as *mut mpv_render_param;
-
-        let ret = unsafe { mpv_err((), mpv_render_context_render(self.ctx, raw_array)) };
-        unsafe {
-            Box::from_raw(raw_array);
-        }
-
-        unsafe {
-            for (ptr, deleter) in raw_ptrs.iter() {
-                (deleter)(*ptr as _);
-            }
-        }
+        let ret = unsafe {
+            mpv_err(
+                (),
+                mpv_render_context_render(self.ctx, mpv_render_params.as_mut_ptr()),
+            )
+        };
 
         ret
     }

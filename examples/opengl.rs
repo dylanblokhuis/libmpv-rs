@@ -36,11 +36,6 @@ use std::{
     mem::transmute,
 };
 
-// fn get_proc_address(display: &Display, name: &str) -> *mut c_void {
-//     println!("!");
-//     display.gl_window().get_proc_address(name) as *mut c_void
-// }
-
 unsafe extern "C" fn get_proc_addr(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
     let rust_name = CStr::from_ptr(name).to_str().unwrap();
     // use a rwlock for real
@@ -83,6 +78,7 @@ fn main() {
     mpv.event_context_mut().disable_deprecated_events().unwrap();
     let event_proxy = events_loop.create_proxy();
     render_context.set_update_callback(move || {
+        println!("Update callback");
         event_proxy.send_event(UserEvent::RedrawRequested).unwrap();
     });
     let event_proxy = events_loop.create_proxy();
@@ -130,7 +126,7 @@ fn main() {
                 if let Some(render_context) = &render_context {
                     let (width, height) = display.get_framebuffer_dimensions();
                     render_context
-                        .render::<Display>(0, width as _, height as _, true)
+                        .render(width as i32, height as i32)
                         .expect("Failed to draw on glutin window");
                     display.swap_buffers().unwrap();
                 }
