@@ -20,7 +20,7 @@ members = ["libmpv-sys"]
 
 [package]
 name = "libmpv"
-version = "3.0.2"
+version = "3.0.3"
 edition = "2018"
 authors = ["ParadoxSpiral <paradoxspiral@riseup.net>"]
 license = "LGPL-2.1"

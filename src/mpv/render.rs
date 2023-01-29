@@ -249,8 +249,6 @@ impl RenderContext {
         //     data: ptr::null_mut(),
         // });
 
-        let proc_addr_addr = get_proc_fn as *const ();
-
         let mpv_ogl_init_param = unsafe {
             mpv_opengl_init_params {
                 get_proc_address: Some(get_proc_fn),
@@ -259,8 +257,6 @@ impl RenderContext {
         };
 
         let mut mpv_render_params = unsafe {
-            let proc_addr_addr = Some(get_proc_fn);
-            println!("addr {:?}", &proc_addr_addr as *const _);
             let vv = vec![
                 mpv_render_param {
                     type_: mpv_render_param_type_MPV_RENDER_PARAM_API_TYPE,
