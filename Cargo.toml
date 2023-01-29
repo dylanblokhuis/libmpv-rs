@@ -20,7 +20,7 @@ members = ["libmpv-sys"]
 
 [package]
 name = "libmpv"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2018"
 authors = ["ParadoxSpiral <paradoxspiral@riseup.net>"]
 license = "LGPL-2.1"
@@ -36,7 +36,8 @@ libmpv-sys = { path = "libmpv-sys" }
 
 [dev-dependencies]
 crossbeam = "0.7"
-glium = { version = "0.30", features = ["glutin"] }
+glutin = "0.28"
+glow = "0.11"
 
 [features]
 default = ["protocols", "render"]

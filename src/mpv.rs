@@ -423,10 +423,10 @@ impl MpvInitializer {
 pub struct Mpv {
     /// The handle to the mpv core
     pub ctx: NonNull<libmpv_sys::mpv_handle>,
-    events_guard: AtomicBool,
     event_context: EventContext,
     #[cfg(feature = "protocols")]
     protocols_guard: AtomicBool,
+    events_guard: AtomicBool,
 }
 
 unsafe impl Send for Mpv {}

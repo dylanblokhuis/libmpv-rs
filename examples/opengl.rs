@@ -15,129 +15,122 @@
 // You should have received a copy of the GNU Lesser General Public
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
-use glium::{
-    glutin::{
-        dpi::LogicalSize,
-        event::{Event, WindowEvent},
-        event_loop::{ControlFlow, EventLoop},
-        platform::{unix::WindowExtUnix, ContextTraitExt},
-        window::WindowBuilder,
-        ContextBuilder,
-    },
-    Display,
+
+use glutin::{
+    event::{Event, WindowEvent},
+    event_loop::ControlFlow,
+    window::Window,
+    ContextWrapper, PossiblyCurrent,
 };
-use libmpv::{
-    render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType},
-    FileState, Mpv,
-};
+use libmpv::{render::RenderContext, FileState, Mpv};
+
 use std::{
     env,
     ffi::{c_char, c_void, CStr},
-    mem::transmute,
 };
+
+#[derive(Debug)]
+enum MPVEvent {
+    RenderUpdate,
+    EventUpdate,
+}
 
 unsafe extern "C" fn get_proc_addr(ctx: *mut c_void, name: *const c_char) -> *mut c_void {
     let rust_name = CStr::from_ptr(name).to_str().unwrap();
-    // use a rwlock for real
-    println!("begin get_proc_addr {:?}", CStr::from_ptr(name));
-    let window: &&Display = transmute(ctx);
-    let addr = window.gl_window().context().get_proc_address(rust_name) as *mut _;
-    println!("end get_proc_addr {:?}", addr);
-    addr
+    let window: &ContextWrapper<PossiblyCurrent, Window> = std::mem::transmute(ctx);
+    window.get_proc_address(rust_name) as *mut _
 }
 
-const VIDEO_URL: &str =
-    "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4";
-
-#[derive(Debug)]
-enum UserEvent {
-    MpvEventAvailable,
-    RedrawRequested,
-}
+const WIDTH: u32 = 1920;
+const HEIGHT: u32 = 1080;
 
 fn main() {
     let path = env::args()
         .nth(1)
-        .unwrap_or_else(|| String::from(VIDEO_URL));
+        .expect("Please provide a path to a video file");
 
-    let events_loop = EventLoop::<UserEvent>::with_user_event();
-    let wb = WindowBuilder::new()
-        .with_inner_size(LogicalSize::new(1024.0, 768.0))
-        .with_title("libmpv-rs OpenGL Example");
-    let cb = ContextBuilder::new();
-    let display = Display::new(wb, cb, &events_loop).unwrap();
+    let (_, _, window, events_loop) = unsafe {
+        let evloop = glutin::event_loop::EventLoop::<MPVEvent>::with_user_event();
+        let window_builder = glutin::window::WindowBuilder::new()
+            .with_title("true")
+            .with_inner_size(glutin::dpi::LogicalSize::new(WIDTH, HEIGHT));
+        let window = glutin::ContextBuilder::new()
+            .with_vsync(true)
+            .build_windowed(window_builder, &evloop)
+            .expect("Failed to build glutin window")
+            .make_current()
+            .expect("Failed to make window current");
+        let gl = glow::Context::from_loader_function(|l| window.get_proc_address(l) as *const _);
+        (gl, "#version 140", window, evloop)
+    };
 
-    let mut mpv = Mpv::new().expect("Error while creating MPV");
-
-    println!("Starting with {:?}", display.gl_window().get_api());
+    let mut mpv = Mpv::new().unwrap();
 
     let mut render_context =
-        RenderContext::new(unsafe { mpv.ctx.as_mut() }, &display, get_proc_addr)
-            .expect("Failed creating render context");
+        RenderContext::new(unsafe { mpv.ctx.as_mut() }, &window, get_proc_addr).unwrap();
 
-    mpv.event_context_mut().disable_deprecated_events().unwrap();
+    println!("Starting with {:?}", window.get_api());
+
     let event_proxy = events_loop.create_proxy();
     render_context.set_update_callback(move || {
-        println!("Update callback");
-        event_proxy.send_event(UserEvent::RedrawRequested).unwrap();
+        event_proxy.send_event(MPVEvent::RenderUpdate).unwrap();
     });
     let event_proxy = events_loop.create_proxy();
     mpv.event_context_mut().set_wakeup_callback(move || {
-        event_proxy
-            .send_event(UserEvent::MpvEventAvailable)
-            .unwrap();
+        event_proxy.send_event(MPVEvent::EventUpdate).unwrap();
     });
-    let mut render_context = Some(render_context);
     mpv.playlist_load_files(&[(&path, FileState::AppendPlay, None)])
         .unwrap();
 
     events_loop.run(move |event, _target, control_flow| {
+        *control_flow = ControlFlow::Wait;
+
         match event {
+            Event::LoopDestroyed => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::MainEventsCleared => window.window().request_redraw(),
+            Event::RedrawRequested(_) => {
+                render_context.render(WIDTH as i32, HEIGHT as i32).unwrap();
+                window.swap_buffers().unwrap();
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent(UserEvent::RedrawRequested) => {
-                display.gl_window().window().request_redraw();
-            }
-            Event::UserEvent(UserEvent::MpvEventAvailable) => loop {
-                match mpv.event_context_mut().wait_event(0.0) {
-                    Some(Ok(libmpv::events::Event::EndFile(_))) => {
-                        *control_flow = ControlFlow::Exit;
-                        break;
-                    }
-                    Some(Ok(mpv_event)) => {
-                        eprintln!("MPV event: {:?   }", mpv_event);
-                    }
-                    Some(Err(err)) => {
-                        eprintln!("MPV Error: {}", err);
-                        *control_flow = ControlFlow::Exit;
-                        break;
-                    }
-                    None => {
-                        *control_flow = ControlFlow::Wait;
-                        break;
-                    }
+            Event::UserEvent(ue) => match ue {
+                MPVEvent::RenderUpdate => {
+                    render_context.update();
+                    window.window().request_redraw();
                 }
+                MPVEvent::EventUpdate => loop {
+                    match mpv.event_context_mut().wait_event(0.0) {
+                        Some(Ok(libmpv::events::Event::EndFile(_))) => {
+                            *control_flow = ControlFlow::Exit;
+                            break;
+                        }
+                        Some(Ok(mpv_event)) => {
+                            println!("MPV event: {:?}", mpv_event);
+                        }
+                        Some(Err(err)) => {
+                            println!("MPV Error: {}", err);
+                            *control_flow = ControlFlow::Exit;
+                            break;
+                        }
+                        None => {
+                            *control_flow = ControlFlow::Wait;
+                            break;
+                        }
+                    }
+                },
             },
-            Event::RedrawRequested(_) => {
-                if let Some(render_context) = &render_context {
-                    let (width, height) = display.get_framebuffer_dimensions();
-                    render_context
-                        .render(width as i32, height as i32)
-                        .expect("Failed to draw on glutin window");
-                    display.swap_buffers().unwrap();
-                }
-                *control_flow = ControlFlow::Wait;
-            }
-            Event::LoopDestroyed => {
-                render_context.take(); // It's important to destroy the render context before the mpv player!
-            }
-            _ => {
-                *control_flow = ControlFlow::Wait;
-            }
+            _ => {} /*Event::DeviceEvent { device_id, event } => todo!(),
+                    Event::UserEvent(_) => todo!(),
+                    Event::Suspended => todo!(),
+                    Event::Resumed => todo!(),
+                    Event::RedrawEventsCleared => todo!(),*/
         }
     });
 }

@@ -19,19 +19,17 @@
 use crate::{mpv::mpv_err, Error, Result};
 use libmpv_sys::{
     self, mpv_handle, mpv_opengl_init_params, mpv_render_context, mpv_render_context_free,
-    mpv_render_context_render, mpv_render_context_set_update_callback, mpv_render_frame_info,
-    mpv_render_param, mpv_render_param_type_MPV_RENDER_PARAM_ADVANCED_CONTROL,
+    mpv_render_context_render, mpv_render_context_set_update_callback, mpv_render_context_update,
+    mpv_render_frame_info, mpv_render_param,
+    mpv_render_param_type_MPV_RENDER_PARAM_ADVANCED_CONTROL,
     mpv_render_param_type_MPV_RENDER_PARAM_API_TYPE,
     mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, MPV_RENDER_API_TYPE_OPENGL,
 };
-use std::collections::HashMap;
 use std::convert::From;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_void, CStr};
 use std::mem::transmute;
 use std::os::raw::c_int;
 use std::ptr::{self, null_mut};
-
-type DeleterFn = unsafe fn(*mut c_void);
 
 pub struct RenderContext {
     ctx: *mut mpv_render_context,
@@ -213,15 +211,6 @@ impl<C> From<RenderParam<C>> for mpv_render_param {
     }
 }
 
-unsafe fn free_void_data<T>(ptr: *mut c_void) {
-    Box::<T>::from_raw(ptr as *mut T);
-}
-
-unsafe fn free_init_params<C>(ptr: *mut c_void) {
-    let params = Box::from_raw(ptr as *mut mpv_opengl_init_params);
-    Box::from_raw(params.get_proc_address_ctx as *mut OpenGLInitParams<C>);
-}
-
 impl RenderContext {
     pub fn new<C>(
         mpv: &mut mpv_handle,
@@ -261,7 +250,6 @@ impl RenderContext {
         // });
 
         let proc_addr_addr = get_proc_fn as *const ();
-        println!("addr {:?}", proc_addr_addr);
 
         let mpv_ogl_init_param = unsafe {
             mpv_opengl_init_params {
@@ -407,14 +395,12 @@ impl RenderContext {
             ]
         };
 
-        let ret = unsafe {
+        unsafe {
             mpv_err(
                 (),
                 mpv_render_context_render(self.ctx, mpv_render_params.as_mut_ptr()),
             )
-        };
-
-        ret
+        }
     }
 
     /// Set the callback that notifies you when a new video frame is available, or if the video display
@@ -440,6 +426,12 @@ impl RenderContext {
                 Some(ru_wrapper::<F>),
                 raw_callback as *mut c_void,
             );
+        }
+    }
+
+    pub fn update(&self) {
+        unsafe {
+            mpv_render_context_update(self.ctx);
         }
     }
 }
