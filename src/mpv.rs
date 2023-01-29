@@ -466,6 +466,13 @@ impl Mpv {
         }
 
         initializer(MpvInitializer { ctx })?;
+        unsafe {
+            libmpv_sys::mpv_set_option_string(
+                ctx,
+                b"osd-level\0".as_ptr() as _,
+                b"0\0".as_ptr() as _,
+            );
+        }
         mpv_err((), unsafe { libmpv_sys::mpv_initialize(ctx) }).map_err(|err| {
             unsafe { libmpv_sys::mpv_terminate_destroy(ctx) };
             err
