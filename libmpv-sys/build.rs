@@ -19,6 +19,24 @@
 use std::env;
 use std::path::PathBuf;
 
+#[cfg(not(feature = "use-bindgen"))]
+fn main() {
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let crate_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    std::fs::copy(
+        crate_path.join("pregenerated_bindings.rs"),
+        out_path.join("bindings.rs"),
+    )
+    .expect("Couldn't find pregenerated bindings!");
+
+    println!("cargo:rerun-if-changed=include/client.h");
+    println!("cargo:rerun-if-changed=include/render.h");
+    println!("cargo:rerun-if-changed=include/render_gl.h");
+    println!("cargo:rerun-if-changed=include/stream_cb.h");
+    println!("cargo:rustc-link-lib=mpv");
+}
+
+#[cfg(feature = "use-bindgen")]
 fn main() {
     let bindings = bindgen::Builder::default()
         .header("include/client.h")
