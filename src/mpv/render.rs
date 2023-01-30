@@ -33,6 +33,7 @@ use std::ptr::{self, null_mut};
 
 pub struct RenderContext {
     ctx: *mut mpv_render_context,
+    render_params: Vec<mpv_render_param>,
     update_callback_cleanup: Option<Box<dyn FnOnce()>>,
 }
 
@@ -290,6 +291,7 @@ impl RenderContext {
             mpv_err(
                 Self {
                     ctx: mpv_gl,
+                    render_params: mpv_render_params,
                     update_callback_cleanup: None,
                 },
                 err,
@@ -362,8 +364,8 @@ impl RenderContext {
     /// * `flip` - Whether to draw the image upside down. This is needed for OpenGL because
     ///            it uses a coordinate system with positive Y up, but videos use positive
     ///            Y down.
-    pub fn render(&self, width: i32, height: i32) -> Result<()> {
-        let mut mpv_render_params = unsafe {
+    pub fn render(&mut self, width: i32, height: i32) -> Result<()> {
+        self.render_params = unsafe {
             vec![
                 mpv_render_param {
                     type_: libmpv_sys::mpv_render_param_type_MPV_RENDER_PARAM_OPENGL_FBO,
@@ -394,7 +396,7 @@ impl RenderContext {
         unsafe {
             mpv_err(
                 (),
-                mpv_render_context_render(self.ctx, mpv_render_params.as_mut_ptr()),
+                mpv_render_context_render(self.ctx, self.render_params.as_mut_ptr()),
             )
         }
     }
