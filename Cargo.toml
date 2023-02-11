@@ -20,11 +20,10 @@ members = ["libmpv-sys"]
 
 [package]
 name = "libmpv"
-version = "3.0.5"
+version = "3.0.7"
 edition = "2018"
 authors = ["ParadoxSpiral <paradoxspiral@riseup.net>"]
 license = "LGPL-2.1"
-build = "build.rs"
 readme = "README.md"
 description = "Libmpv abstraction that's easy to use and can play next to all codecs and containers"
 repository = "https://github.com/ParadoxSpiral/libmpv-rs"
@@ -47,7 +46,3 @@ build_libmpv = [] # build libmpv automatically, provided MPV_SOURCE is set
 
 [badges]
 travis-ci = { repository = "https://github.com/ParadoxSpiral/mpv-rs", branch = "master" }
-
-[build-dependencies]
-reqwest = { version = "0.11.14", features = ["blocking"] }
-sevenz-rust = "0.2.3"
