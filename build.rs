@@ -16,64 +16,52 @@
 // License along with this library; if not, write to the Free Software
 // Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
-#[cfg(feature = "build_libmpv")]
-use std::env;
-
-#[cfg(all(feature = "build_libmpv", not(target_os = "windows")))]
-use std::process::Command;
-
-#[cfg(not(feature = "build_libmpv"))]
-fn main() {}
-
-#[cfg(all(feature = "build_libmpv", target_os = "windows"))]
+#[cfg(target_env = "msvc")]
 fn main() {
-    let source = env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
+    use std::{env, fs, io::Write, path::Path, process::Command};
 
-    if env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap() == "64" {
-        println!("cargo:rustc-link-search={}/64/", source);
-    } else {
-        println!("cargo:rustc-link-search={}/32/", source);
+    let install_dir = env::var("OUT_DIR").unwrap() + "/installed";
+    let lib_install_dir = Path::new(&install_dir).join("lib");
+    fs::create_dir_all(&lib_install_dir).unwrap();
+
+    let archive_path = lib_install_dir.join("mpv.7z");
+    if fs::File::open(archive_path.clone()).is_err() {
+        let mpv_zip = "https://kumisystems.dl.sourceforge.net/project/mpv-player-windows/libmpv/mpv-dev-x86_64-v3-20221113-git-2f74734.7z";
+        let res = reqwest::blocking::get(mpv_zip).unwrap();
+        let bytes = res.bytes().unwrap();
+
+        // write file
+        let mut file = std::fs::File::create(archive_path.clone()).unwrap();
+        file.write_all(&bytes).unwrap();
     }
-}
 
-#[cfg(all(feature = "build_libmpv", not(target_os = "windows")))]
-fn main() {
-    let source = env::var("MPV_SOURCE").expect("env var `MPV_SOURCE` not set");
-    let num_threads = env::var("NUM_JOBS").unwrap();
+    let extracted_files_path = lib_install_dir.join("files");
+    if fs::File::open(extracted_files_path.join("mpv.lib")).is_err() {
+        sevenz_rust::decompress_file(archive_path, extracted_files_path.clone()).expect("complete");
 
-    // `target` (in cfg) doesn't really mean target. It means target(host) of build script,
-    // which is a bit confusing because it means the actual `--target` everywhere else.
-    #[cfg(target_pointer_width = "64")]
-    {
-        if env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap() == "32" {
-            panic!("Cross-compiling to different arch not yet supported");
+        // add EXPORTS to mpv.def, otherwise the mpv.lib will be empty
+        let mut mpv_def = fs::read_to_string(extracted_files_path.join("mpv.def")).unwrap();
+        mpv_def = format!("EXPORTS\n{}", mpv_def);
+        fs::write(extracted_files_path.join("mpv.def"), mpv_def).unwrap();
+
+        let cmd_output = Command::new("lib.exe")
+            .current_dir(extracted_files_path.clone())
+            .arg("/def:mpv.def")
+            .arg("/name:mpv-2.dll")
+            .arg("/out:mpv.lib")
+            .arg("/MACHINE:X64")
+            .output()
+            .expect("Failed to run lib.exe, do you have Visual Studio Build Tools installed?");
+
+        let output = String::from_utf8(cmd_output.stdout).unwrap();
+        if !output.contains("Creating library mpv.lib and object mpv.exp") {
+            panic!("lib.exe failed: {}", output);
         }
     }
-    #[cfg(target_pointer_width = "32")]
-    {
-        if env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap() == "64" {
-            panic!("Cross-compiling to different arch not yet supported");
-        }
-    }
 
-    // The mpv build script interprets the TARGET env var, which is set by cargo to e.g.
-    // x86_64-unknown-linux-gnu, thus the script can't find the compiler.
-    // TODO: When Cross-compiling to different archs is implemented, this has to be handled.
-    env::remove_var("TARGET");
-
-    let cmd = format!(
-        "cd {} && echo \"--enable-libmpv-shared\" > {0}/mpv_options \
-         && {0}/build -j{}",
-        source, num_threads
+    println!("cargo:rustc-link-lib=static=mpv");
+    println!(
+        "cargo:rustc-link-search=native={}",
+        extracted_files_path.display()
     );
-
-    Command::new("sh")
-        .arg("-c")
-        .arg(&cmd)
-        .spawn()
-        .expect("mpv-build build failed")
-        .wait()
-        .expect("mpv-build build failed");
-
-    println!("cargo:rustc-link-search={}/mpv/build/", source);
 }
