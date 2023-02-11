@@ -37,7 +37,10 @@ fn main() {
     #[cfg(target_env = "msvc")]
     download_and_compile_lib();
 
+    #[cfg(target_env = "msvc")]
     println!("cargo:rustc-link-lib=static=mpv");
+    #[cfg(not(target_env = "msvc"))]
+    println!("cargo:rustc-link-lib=mpv");
 }
 
 fn download_and_compile_lib() {
