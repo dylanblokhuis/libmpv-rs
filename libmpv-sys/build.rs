@@ -133,12 +133,12 @@ fn use_mpv_build() {
 
     if fs::File::open(extracted_files_path.join("mpv-build-master/mpv/build/mpv")).is_err() {
         // create mpv_options file
-        // {
-        //     let mut mpv_options =
-        //         fs::File::create(extracted_files_path.join("mpv-build-master/mpv_options"))
-        //             .unwrap();
-        //     mpv_options.write_all("-Dlibmpv=true".as_bytes()).unwrap();
-        // }
+        {
+            let mut mpv_options =
+                fs::File::create(extracted_files_path.join("mpv-build-master/mpv_options"))
+                    .unwrap();
+            mpv_options.write_all("-Dlibmpv=true".as_bytes()).unwrap();
+        }
 
         // build mpv binary
         let output = Command::new("sh")
@@ -148,6 +148,13 @@ fn use_mpv_build() {
             .arg("-j4")
             .output()
             .expect("failed to execute process");
+
+        if output.stderr.len() > 0 {
+            panic!(
+                "{}\nFailed to build mpv using mpv-build",
+                String::from_utf8(output.stderr).unwrap()
+            );
+        }
 
         let output = String::from_utf8(output.stdout).unwrap();
         if !output.contains("Linking target mpv") {
