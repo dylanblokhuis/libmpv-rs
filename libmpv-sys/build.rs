@@ -45,7 +45,7 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
-        use_mpv_build();
+        // use_mpv_build();
         println!("cargo:rustc-link-lib=mpv");
     }
     
