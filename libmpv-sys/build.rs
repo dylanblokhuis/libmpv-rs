@@ -37,16 +37,18 @@ fn main() {
     println!("cargo:rerun-if-changed=include/stream_cb.h");
 
     #[cfg(target_env = "msvc")]
-    download_and_compile_lib();
+    {
+        download_and_compile_lib();
+        println!("cargo:rustc-link-lib=static=mpv");
+    }
+    
 
     #[cfg(target_os = "linux")]
-    use_mpv_build();
-
-    #[cfg(target_env = "msvc")]
-    println!("cargo:rustc-link-lib=static=mpv");
-
-    #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-lib=static=mpv");
+    {
+        use_mpv_build();
+        println!("cargo:rustc-link-lib=mpv");
+    }
+    
 
     #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=mpv");
@@ -54,6 +56,15 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn use_mpv_build() {
+    if pkg_config::Config::new()
+        .atleast_version("0.35.0")
+        .probe("libmpv")
+        .is_ok()
+    {
+        println!("cargo:warning=Using system libmpv");
+        return;
+    }
+
     let install_dir = env::var("OUT_DIR").unwrap() + "/installed";
     let lib_install_dir = Path::new(&install_dir).join("lib");
     fs::create_dir_all(&lib_install_dir).unwrap();
@@ -121,9 +132,18 @@ fn use_mpv_build() {
     }
 
     if fs::File::open(extracted_files_path.join("mpv-build-master/mpv/build/mpv")).is_err() {
+        // create mpv_options file
+        {
+            let mut mpv_options =
+                fs::File::create(extracted_files_path.join("mpv-build-master/mpv_options"))
+                    .unwrap();
+            mpv_options.write_all("-Dlibmpv=true".as_bytes()).unwrap();
+        }
+
         // build mpv binary
         let output = Command::new("sh")
             .current_dir(extracted_files_path.join("mpv-build-master"))
+            .env("CFLAGS", "-fPIC")
             .arg("./rebuild")
             .arg("-j4")
             .output()
