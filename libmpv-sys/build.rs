@@ -133,12 +133,12 @@ fn use_mpv_build() {
 
     if fs::File::open(extracted_files_path.join("mpv-build-master/mpv/build/mpv")).is_err() {
         // create mpv_options file
-        {
-            let mut mpv_options =
-                fs::File::create(extracted_files_path.join("mpv-build-master/mpv_options"))
-                    .unwrap();
-            mpv_options.write_all("-Dlibmpv=true".as_bytes()).unwrap();
-        }
+        // {
+        //     let mut mpv_options =
+        //         fs::File::create(extracted_files_path.join("mpv-build-master/mpv_options"))
+        //             .unwrap();
+        //     mpv_options.write_all("-Dlibmpv=true".as_bytes()).unwrap();
+        // }
 
         // build mpv binary
         let output = Command::new("sh")
